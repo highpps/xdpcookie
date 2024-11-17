@@ -427,7 +427,6 @@ static int xdpcookie_read_counters(int values_fd)
 
 int main(int argc, char *argv[])
 {
-    int values_fd;
     unsigned int ifindex;
     __u16 ports[argc];
     __u16 vlans[argc];
@@ -483,6 +482,8 @@ int main(int argc, char *argv[])
     }
 
     if (show) {
+        int values_fd;
+
         ret = xdpcookie_open_maps(prog_id, &values_fd);
         if (ret < 0) {
             fprintf(stderr, "xdpcookie_open_maps() has failed: %d\n", ret);
