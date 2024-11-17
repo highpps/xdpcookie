@@ -789,42 +789,56 @@ static __always_inline int xdpcookie_check_sums(
 	struct xdp_md *ctx,
 	struct header_pointers *hdr)
 {
-	void *data_end = (void *)(long) ctx->data_end;
+	void *end = (void *)(long) ctx->data_end;
 
 	__s64 value;
-
-	if ((void *) hdr->tcp + TCP_MAXLEN > data_end)
-		return XDP_ABORTED;
+	__u16 sum;
 
 	if (hdr->ipv4) {
 
-		if ((void *) hdr->ipv4 + IPV4_MAXLEN > data_end)
+		// Check that the IP header has at most IPV4_MAXLEN and there
+		// is enough data in the buffer to pass it to bpf_csum_diff()
+		// and pass the verifier.
+
+		if ((void *) hdr->ipv4 + IPV4_MAXLEN > end)
 			return XDP_ABORTED;
 
-		/* Check the IPv4 and TCP checksums before creating a SYNACK. */
-		value = bpf_csum_diff(0, 0, (void *)hdr->ipv4, hdr->ipv4->ihl * 4, 0);
+		value = bpf_csum_diff(0, 0, (void *) hdr->ipv4, hdr->ipv4->ihl * 4, 0);
 		if (value < 0)
 			return XDP_ABORTED;
-		if (csum_fold(value) != 0)
-			return XDP_DROP; /* Bad IPv4 checksum. */
 
-		value = bpf_csum_diff(0, 0, (void *)hdr->tcp, hdr->tcp_len, 0);
-		if (value < 0)
+		sum = csum_fold(value);
+		if (sum != 0)
+			return XDP_DROP; // Bad IPv4 checksum
+	}
+
+	// Check that the TCP header has at most TCP_MAXLEN and there
+	// is enough data in the buffer to pass it to bpf_csum_diff()
+	// and pass the verifier.
+
+	if ((void *) hdr->tcp + TCP_MAXLEN > end)
+		return XDP_ABORTED;
+
+	value = bpf_csum_diff(0, 0, (void *) hdr->tcp, hdr->tcp_len, 0);
+	if (value < 0)
+		return XDP_ABORTED;
+
+	if (hdr->ipv4) {
+		if (hdr->ipv4 + 1 > end)
 			return XDP_ABORTED;
-		if (csum_tcpudp_magic(hdr->ipv4->saddr, hdr->ipv4->daddr,
-				      hdr->tcp_len, IPPROTO_TCP, value) != 0)
-			return XDP_DROP; /* Bad TCP checksum. */
+
+		sum = csum_tcpudp_magic(hdr->ipv4->saddr, hdr->ipv4->daddr, hdr->tcp_len, IPPROTO_TCP, value);
 	} else if (hdr->ipv6) {
-		/* Check the TCP checksum before creating a SYNACK. */
-		value = bpf_csum_diff(0, 0, (void *)hdr->tcp, hdr->tcp_len, 0);
-		if (value < 0)
+		if (hdr->ipv6 + 1 > end)
 			return XDP_ABORTED;
-		if (csum_ipv6_magic(&hdr->ipv6->saddr, &hdr->ipv6->daddr,
-				    hdr->tcp_len, IPPROTO_TCP, value) != 0)
-			return XDP_DROP; /* Bad TCP checksum. */
+
+		sum = csum_ipv6_magic(&hdr->ipv6->saddr, &hdr->ipv6->daddr, hdr->tcp_len, IPPROTO_TCP, value);
 	} else {
 		return XDP_ABORTED;
 	}
+
+	if (sum != 0)
+		return XDP_DROP; // Bad TCP checksum
 
 	return XDP_TX;
 }
