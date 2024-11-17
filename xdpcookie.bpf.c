@@ -701,7 +701,14 @@ static __always_inline int syncookie_handle_syn(
 	__u32 cookie;
 	__s64 value;
 
+	if ((void *)hdr->tcp + TCP_MAXLEN > data_end)
+		return XDP_ABORTED;
+
 	if (hdr->ipv4) {
+
+		if ((void *) hdr->ipv4 + IPV4_MAXLEN > data_end)
+			return XDP_ABORTED;
+
 		/* Check the IPv4 and TCP checksums before creating a SYNACK. */
 		value = bpf_csum_diff(0, 0, (void *)hdr->ipv4, hdr->ipv4->ihl * 4, 0);
 		if (value < 0)
@@ -814,44 +821,35 @@ static __always_inline int xdpcookie_grow_buffer(
 	struct xdp_md *ctx,
 	struct header_pointers *hdr)
 {
-	void *data_end;
 	void *data;
 
-	/* Grow the TCP header to TCP_MAXLEN to be able to pass any hdr->tcp_len
-	 * to bpf_tcp_raw_gen_syncookie_ipv{4,6} and pass the verifier.
-	 */
-	if (bpf_xdp_adjust_tail(ctx, TCP_MAXLEN - hdr->tcp_len))
+	// Find out buffer capacity behind TCP offset
+	__u64 tcp_buff_cap = bpf_xdp_get_buff_len(ctx) - hdr->tcp_off;
+
+	// Grow the buffer to TCP_MAXLEN to be able to pass any
+	// hdr->tcp_len value to bpf_tcp_raw_gen_syncookie_ipv4/6()
+	// and pass the verifier.
+
+	int ret = bpf_xdp_adjust_tail(ctx, TCP_MAXLEN - tcp_buff_cap);
+	if (ret)
 		return XDP_ABORTED;
 
-	data_end = (void *)(long) ctx->data_end;
+	// Re-evaluate pointers after tail adjustment as the
+	// underlying packet buffer may changed and the checks
+	// on pointers by the verifier were invalidated.
+
 	data = (void *)(long) ctx->data;
 
-	if (hdr->ipv4) {
-		hdr->eth = data;
-		hdr->ipv4 = (void *)hdr->eth + sizeof(*hdr->eth);
-		/* IPV4_MAXLEN is needed when calculating checksum.
-		 * At least sizeof(struct iphdr) is needed here to access ihl.
-		 */
-		if ((void *)hdr->ipv4 + IPV4_MAXLEN > data_end)
-			return XDP_ABORTED;
-		hdr->tcp = (void *)hdr->ipv4 + hdr->ipv4->ihl * 4;
-	} else if (hdr->ipv6) {
-		hdr->eth = data;
-		hdr->ipv6 = (void *)hdr->eth + sizeof(*hdr->eth);
-		hdr->tcp = (void *)hdr->ipv6 + sizeof(*hdr->ipv6);
-	} else {
-		return XDP_ABORTED;
-	}
+	hdr->eth = data;
 
-	if ((void *)hdr->tcp + TCP_MAXLEN > data_end)
+	if (hdr->ipv4)
+		hdr->ipv4 = data + hdr->ipvx_off;
+	else if (hdr->ipv6)
+		hdr->ipv6 = data + hdr->ipvx_off;
+	else
 		return XDP_ABORTED;
 
-	/* We run out of registers, tcp_len gets spilled to the stack, and the
-	 * verifier forgets its min and max values checked above in tcp_dissect.
-	 */
-	hdr->tcp_len = hdr->tcp->doff * 4;
-	if (hdr->tcp_len < sizeof(*hdr->tcp))
-		return XDP_ABORTED;
+	hdr->tcp = data + hdr->tcp_off;
 
 	return XDP_TX;
 }
