@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
 
 USER_PROG := xdpcookie
+USER_HDRS := xdpcookie.h
 EBPF_OBJS := xdpcookie.bpf.o
 
 CFLAGS ?= -O2 -g -Wall -Werror
@@ -38,7 +39,7 @@ $(CONFIG): $(CONFIGURE)
 ${VMLINUX}: $(MKDEPS)
 	$(BPFTOOL) btf dump file /sys/kernel/btf/vmlinux format c >$@
 
-$(EBPF_OBJS): %.o: %.c ${VMLINUX} $(MKDEPS)
+$(EBPF_OBJS): %.o: %.c $(USER_HDRS) ${VMLINUX} $(MKDEPS)
 	$(CLANG) -target bpf -mcpu=probe $(BPF_CFLAGS) -c -o $@ $<
 
 $(EBPF_SKEL): %.h: %.o $(MKDEPS)
