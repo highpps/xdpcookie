@@ -677,32 +677,32 @@ static __always_inline int xdpcookie_calc_sums(
 	struct header_pointers *hdr)
 {
 	__s64 value;
+	__u16 sum;
 
-	/* Recalculate checksums. */
 	hdr->tcp->check = 0;
-	value = bpf_csum_diff(0, 0, (void *)hdr->tcp, hdr->tcp_len, 0);
+
+	value = bpf_csum_diff(0, 0, (void *) hdr->tcp, hdr->tcp_len, 0);
 	if (value < 0)
 		return XDP_ABORTED;
-	if (hdr->ipv4) {
-		hdr->tcp->check = csum_ipv4_magic(hdr->ipv4->saddr,
-						    hdr->ipv4->daddr,
-						    hdr->tcp_len,
-						    IPPROTO_TCP,
-						    value);
 
+	if (hdr->ipv4)
+		sum = csum_ipv4_magic(hdr->ipv4->saddr, hdr->ipv4->daddr, hdr->tcp_len, IPPROTO_TCP, value);
+	else if (hdr->ipv6)
+		sum = csum_ipv6_magic(&hdr->ipv6->saddr, &hdr->ipv6->daddr, hdr->tcp_len, IPPROTO_TCP, value);
+	else
+		return XDP_ABORTED;
+
+	hdr->tcp->check	= sum;
+
+	if (hdr->ipv4) {
 		hdr->ipv4->check = 0;
-		value = bpf_csum_diff(0, 0, (void *)hdr->ipv4, sizeof(*hdr->ipv4), 0);
+
+		value = bpf_csum_diff(0, 0, (void *) hdr->ipv4, hdr->ipvx_len, 0);
 		if (value < 0)
 			return XDP_ABORTED;
-		hdr->ipv4->check = csum_fold(value);
-	} else if (hdr->ipv6) {
-		hdr->tcp->check = csum_ipv6_magic(&hdr->ipv6->saddr,
-						  &hdr->ipv6->daddr,
-						  hdr->tcp_len,
-						  IPPROTO_TCP,
-						  value);
-	} else {
-		return XDP_ABORTED;
+
+		sum = csum_fold(value);
+		hdr->ipv4->check = sum;
 	}
 
 	return XDP_TX;
