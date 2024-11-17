@@ -672,6 +672,42 @@ static __always_inline void tcpv6_gen_synack(
 	hdr->ipv6->payload_len = bpf_htons(hdr->tcp_len);
 }
 
+static __always_inline int xdpcookie_calc_sums(
+	struct xdp_md *ctx,
+	struct header_pointers *hdr)
+{
+	__s64 value;
+
+	/* Recalculate checksums. */
+	hdr->tcp->check = 0;
+	value = bpf_csum_diff(0, 0, (void *)hdr->tcp, hdr->tcp_len, 0);
+	if (value < 0)
+		return XDP_ABORTED;
+	if (hdr->ipv4) {
+		hdr->tcp->check = csum_ipv4_magic(hdr->ipv4->saddr,
+						    hdr->ipv4->daddr,
+						    hdr->tcp_len,
+						    IPPROTO_TCP,
+						    value);
+
+		hdr->ipv4->check = 0;
+		value = bpf_csum_diff(0, 0, (void *)hdr->ipv4, sizeof(*hdr->ipv4), 0);
+		if (value < 0)
+			return XDP_ABORTED;
+		hdr->ipv4->check = csum_fold(value);
+	} else if (hdr->ipv6) {
+		hdr->tcp->check = csum_ipv6_magic(&hdr->ipv6->saddr,
+						  &hdr->ipv6->daddr,
+						  hdr->tcp_len,
+						  IPPROTO_TCP,
+						  value);
+	} else {
+		return XDP_ABORTED;
+	}
+
+	return XDP_TX;
+}
+
 static __always_inline int xdpcookie_gen_synack(
 	struct xdp_md *ctx,
 	struct header_pointers *hdr)
@@ -701,6 +737,8 @@ static __always_inline int xdpcookie_gen_synack(
 	__u16 ip_len;
 	__u32 cookie;
 	__s64 value;
+
+	int ret;
 
 	if ((void *) hdr->tcp + TCP_MAXLEN > data_end)
 		return XDP_ABORTED;
@@ -757,32 +795,9 @@ static __always_inline int xdpcookie_gen_synack(
 		return XDP_ABORTED;
 	}
 
-	/* Recalculate checksums. */
-	hdr->tcp->check = 0;
-	value = bpf_csum_diff(0, 0, (void *)hdr->tcp, hdr->tcp_len, 0);
-	if (value < 0)
-		return XDP_ABORTED;
-	if (hdr->ipv4) {
-		hdr->tcp->check = csum_ipv4_magic(hdr->ipv4->saddr,
-						    hdr->ipv4->daddr,
-						    hdr->tcp_len,
-						    IPPROTO_TCP,
-						    value);
-
-		hdr->ipv4->check = 0;
-		value = bpf_csum_diff(0, 0, (void *)hdr->ipv4, sizeof(*hdr->ipv4), 0);
-		if (value < 0)
-			return XDP_ABORTED;
-		hdr->ipv4->check = csum_fold(value);
-	} else if (hdr->ipv6) {
-		hdr->tcp->check = csum_ipv6_magic(&hdr->ipv6->saddr,
-						  &hdr->ipv6->daddr,
-						  hdr->tcp_len,
-						  IPPROTO_TCP,
-						  value);
-	} else {
-		return XDP_ABORTED;
-	}
+	ret = xdpcookie_calc_sums(ctx, hdr);
+	if (ret != XDP_TX)
+		return ret;
 
 	/* Set the new packet size. */
 	old_pkt_size = data_end - data;
