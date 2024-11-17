@@ -702,45 +702,12 @@ static __always_inline int syncookie_handle_syn(
 	__u32 cookie;
 	__s64 value;
 
-	if ((void *)hdr->tcp + TCP_MAXLEN > data_end)
-		return XDP_ABORTED;
-
 	if (hdr->ipv4) {
-
-		if ((void *) hdr->ipv4 + IPV4_MAXLEN > data_end)
-			return XDP_ABORTED;
-
-		/* Check the IPv4 and TCP checksums before creating a SYNACK. */
-		value = bpf_csum_diff(0, 0, (void *)hdr->ipv4, hdr->ipv4->ihl * 4, 0);
-		if (value < 0)
-			return XDP_ABORTED;
-		if (csum_fold(value) != 0)
-			return XDP_DROP; /* Bad IPv4 checksum. */
-
-		value = bpf_csum_diff(0, 0, (void *)hdr->tcp, hdr->tcp_len, 0);
-		if (value < 0)
-			return XDP_ABORTED;
-		if (csum_tcpudp_magic(hdr->ipv4->saddr, hdr->ipv4->daddr,
-				      hdr->tcp_len, IPPROTO_TCP, value) != 0)
-			return XDP_DROP; /* Bad TCP checksum. */
-
 		ip_len = sizeof(*hdr->ipv4);
-
-		value = bpf_tcp_raw_gen_syncookie_ipv4(hdr->ipv4, hdr->tcp,
-						       hdr->tcp_len);
+		value = bpf_tcp_raw_gen_syncookie_ipv4(hdr->ipv4, hdr->tcp, hdr->tcp_len);
 	} else if (hdr->ipv6) {
-		/* Check the TCP checksum before creating a SYNACK. */
-		value = bpf_csum_diff(0, 0, (void *)hdr->tcp, hdr->tcp_len, 0);
-		if (value < 0)
-			return XDP_ABORTED;
-		if (csum_ipv6_magic(&hdr->ipv6->saddr, &hdr->ipv6->daddr,
-				    hdr->tcp_len, IPPROTO_TCP, value) != 0)
-			return XDP_DROP; /* Bad TCP checksum. */
-
 		ip_len = sizeof(*hdr->ipv6);
-
-		value = bpf_tcp_raw_gen_syncookie_ipv6(hdr->ipv6, hdr->tcp,
-						       hdr->tcp_len);
+		value = bpf_tcp_raw_gen_syncookie_ipv6(hdr->ipv6, hdr->tcp, hdr->tcp_len);
 	} else {
 		return XDP_ABORTED;
 	}
@@ -818,6 +785,51 @@ static __always_inline int syncookie_handle_syn(
 	return XDP_TX;
 }
 
+static __always_inline int xdpcookie_check_sums(
+	struct xdp_md *ctx,
+	struct header_pointers *hdr)
+{
+	void *data_end = (void *)(long) ctx->data_end;
+
+	__s64 value;
+
+	if ((void *) hdr->tcp + TCP_MAXLEN > data_end)
+		return XDP_ABORTED;
+
+	if (hdr->ipv4) {
+
+		if ((void *) hdr->ipv4 + IPV4_MAXLEN > data_end)
+			return XDP_ABORTED;
+
+		/* Check the IPv4 and TCP checksums before creating a SYNACK. */
+		value = bpf_csum_diff(0, 0, (void *)hdr->ipv4, hdr->ipv4->ihl * 4, 0);
+		if (value < 0)
+			return XDP_ABORTED;
+		if (csum_fold(value) != 0)
+			return XDP_DROP; /* Bad IPv4 checksum. */
+
+		value = bpf_csum_diff(0, 0, (void *)hdr->tcp, hdr->tcp_len, 0);
+		if (value < 0)
+			return XDP_ABORTED;
+		if (csum_tcpudp_magic(hdr->ipv4->saddr, hdr->ipv4->daddr,
+				      hdr->tcp_len, IPPROTO_TCP, value) != 0)
+			return XDP_DROP; /* Bad TCP checksum. */
+	} else if (hdr->ipv6) {
+		/* Check the TCP checksum before creating a SYNACK. */
+		value = bpf_csum_diff(0, 0, (void *)hdr->tcp, hdr->tcp_len, 0);
+		if (value < 0)
+			return XDP_ABORTED;
+		if (csum_ipv6_magic(&hdr->ipv6->saddr, &hdr->ipv6->daddr,
+				    hdr->tcp_len, IPPROTO_TCP, value) != 0)
+			return XDP_DROP; /* Bad TCP checksum. */
+	} else {
+		return XDP_ABORTED;
+	}
+
+	return XDP_TX;
+}
+
+
 static __always_inline int xdpcookie_grow_buffer(
 	struct xdp_md *ctx,
 	struct header_pointers *hdr)
@@ -865,6 +877,10 @@ static __always_inline int xdpcookie_handle_syn(
 		return XDP_DROP;
 
 	ret = xdpcookie_grow_buffer(ctx, hdr);
+	if (ret != XDP_TX)
+		return ret;
+
+	ret = xdpcookie_check_sums(ctx, hdr);
 	if (ret != XDP_TX)
 		return ret;
 
