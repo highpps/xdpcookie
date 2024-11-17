@@ -16,6 +16,12 @@
 #include <sys/resource.h>
 #include <unistd.h>
 
+// Should be defined in bpf/bpf.h, but it is not
+// available in the current linux-libc-dev pkg.
+#ifndef BPF_F_XDP_DEV_BOUND_ONLY
+#define BPF_F_XDP_DEV_BOUND_ONLY (1U << 6)
+#endif
+
 #define _STRINGIFY(x) #x
 #define STRINGIFY(x) _STRINGIFY(x)
 
@@ -294,17 +300,36 @@ static int xdpcookie_attach(unsigned int ifindex, __u32 *prog_id)
     __u32 info_len = sizeof(info);
 
     struct xdpcookie_bpf *obj;
+    struct bpf_program *prog;
     int prog_fd;
     int ret;
 
-    obj = xdpcookie_bpf__open_and_load();
+    obj = xdpcookie_bpf__open();
     if (!obj) {
         int _errno = -errno;
-        fprintf(stderr, "xdpcookie_bpf__open_and_load() has failed: %d\n", _errno);
+        fprintf(stderr, "xdpcookie_bpf__open() has failed: %d\n", _errno);
         return _errno;
     }
 
-    prog_fd = bpf_program__fd(obj->progs.xdpcookie);
+    prog = obj->progs.xdpcookie;
+
+    bpf_program__set_ifindex(prog, ifindex);
+
+    ret = bpf_program__set_flags(prog, BPF_F_XDP_DEV_BOUND_ONLY);
+    if (ret < 0) {
+        fprintf(stderr, "bpf_program__set_flags() has failed: %d\n", ret);
+        xdpcookie_bpf__destroy(obj);
+        return ret;
+    }
+
+    ret = xdpcookie_bpf__load(obj);
+    if (ret < 0) {
+        fprintf(stderr, "xdpcookie_bpf__load() has failed: %d\n", ret);
+        xdpcookie_bpf__destroy(obj);
+        return ret;
+    }
+
+    prog_fd = bpf_program__fd(prog);
 
     ret = bpf_xdp_attach(ifindex, prog_fd, flags, NULL);
     if (ret < 0) {
