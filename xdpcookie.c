@@ -388,7 +388,7 @@ static int xdpcookie_attach(
 
 static int xdpcookie_read_counters(int values_fd)
 {
-    __u32 key = 1;
+    __u32 key = 0;
     __u64 value;
 
     int ret = bpf_map_lookup_elem(values_fd, &key, &value);

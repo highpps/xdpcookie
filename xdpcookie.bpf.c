@@ -80,7 +80,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__type(key, __u32);
 	__type(value, __u64);
-	__uint(max_entries, 2);
+	__uint(max_entries, 1);
 } values SEC(".maps");
 
 /* Some symbols defined in net/netfilter/nf_conntrack_bpf.c are unavailable in
@@ -325,7 +325,7 @@ static __always_inline void values_get_tcpipopts(
 
 static __always_inline void values_inc_synacks()
 {
-	__u32 key = 1;
+	__u32 key = 0;
 	__u64 *value;
 
 	value = bpf_map_lookup_elem(&values, &key);
