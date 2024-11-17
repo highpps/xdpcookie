@@ -371,13 +371,191 @@ static __always_inline bool check_port_allowed(__u16 port)
 	return false;
 }
 
+struct hdr_cursor {
+    void *pos;
+    unsigned off;
+};
+
+static __always_inline int parse_ethhdr(
+	struct hdr_cursor *nh,
+	void *data_end,
+	struct ethhdr **ethhdr)
+{
+    struct ethhdr *eth = nh->pos;
+    __u16 proto;
+
+    if (eth + 1 > data_end)
+        return -1;
+
+    nh->pos = eth + 1;
+    nh->off += sizeof(*eth);
+
+    proto = eth->h_proto;
+    *ethhdr = eth;
+
+    return proto;
+}
+
+static __always_inline int parse_iphdr(
+	struct hdr_cursor *nh,
+    void *data_end,
+    struct iphdr **iphdr)
+{
+    struct iphdr *iph = nh->pos;
+    int hdrsize;
+
+    if (iph + 1 > data_end)
+        return -1;
+
+    hdrsize = iph->ihl * 4;
+
+    // Variable-length IPv4 header
+    if (nh->pos + hdrsize > data_end)
+        return -1;
+
+    nh->pos += hdrsize;
+    nh->off += hdrsize;
+
+    *iphdr = iph;
+
+    return iph->protocol;
+}
+
+static __always_inline int parse_ip6hdr(
+	struct hdr_cursor *nh,
+    void *data_end,
+    struct ipv6hdr **ip6hdr)
+{
+    struct ipv6hdr *ip6h = nh->pos;
+
+    if (ip6h + 1 > data_end)
+        return -1;
+
+    nh->pos = ip6h + 1;
+    nh->off += sizeof(*ip6h);
+
+    *ip6hdr = ip6h;
+
+    return ip6h->nexthdr;
+}
+
+static __always_inline int parse_tcphdr(
+	struct hdr_cursor *nh,
+    void *data_end,
+    struct tcphdr **tcphdr)
+{
+    int len;
+    struct tcphdr *tcp = nh->pos;
+
+    if (tcp + 1 > data_end)
+        return -1;
+
+    len = tcp->doff * 4;
+    if ((void *) tcp + len > data_end)
+        return -1;
+
+    nh->pos = tcp + 1;
+    nh->off += sizeof(*tcp);
+
+    *tcphdr = tcp;
+
+    return len;
+}
+
 struct header_pointers {
 	struct ethhdr *eth;
 	struct iphdr *ipv4;
 	struct ipv6hdr *ipv6;
+	__u16 ipvx_off;
+	__u16 ipvx_len;
 	struct tcphdr *tcp;
 	__u16 tcp_len;
+	__u16 tcp_off;
 };
+
+static __always_inline int parse_headers(
+	struct xdp_md *ctx,
+	struct header_pointers *hdr)
+{
+	void *data_end = (void *)(long) ctx->data_end;
+	void *data = (void *)(long) ctx->data;
+
+	struct hdr_cursor nh = {
+		.pos = data,
+		.off = 0,
+	};
+
+	int eth_type;
+	int ip_type;
+	int tcp_len;
+
+	hdr->eth = NULL;
+
+	hdr->ipv4 = NULL;
+	hdr->ipv6 = NULL;
+	hdr->ipvx_off = 0;
+	hdr->ipvx_len = 0;
+
+	hdr->tcp = NULL;
+	hdr->tcp_len = 0;
+	hdr->tcp_off = 0;
+
+	eth_type = parse_ethhdr(&nh, data_end, &hdr->eth);
+	if (eth_type < 0)
+		return XDP_DROP;
+
+	hdr->ipvx_off = nh.off;
+
+	switch (eth_type) {
+	case bpf_htons(ETH_P_IP):
+		ip_type = parse_iphdr(&nh, data_end, &hdr->ipv4);
+
+		if (ip_type < 0)
+			return XDP_DROP;
+
+		if (hdr->ipv4->ihl * 4 < sizeof(*hdr->ipv4))
+			return XDP_DROP;
+
+		if (hdr->ipv4->version != 4)
+			return XDP_DROP;
+
+		hdr->ipvx_len = hdr->ipv4->ihl * 4;
+
+		break;
+
+	case bpf_htons(ETH_P_IPV6):
+		ip_type = parse_ip6hdr(&nh, data_end, &hdr->ipv6);
+
+		if (ip_type < 0)
+			return XDP_DROP;
+
+		if (hdr->ipv6->version != 6)
+			return XDP_DROP;
+
+		hdr->ipvx_len = sizeof(*hdr->ipv6);
+
+		break;
+
+	default:
+		return XDP_PASS;
+	}
+
+	if (ip_type != NEXTHDR_TCP)
+		return XDP_PASS;
+
+	hdr->tcp_off = nh.off;
+
+	tcp_len = parse_tcphdr(&nh, data_end, &hdr->tcp);
+	if (tcp_len < 0)
+		return XDP_DROP;
+
+	if (tcp_len < sizeof(*hdr->tcp))
+		return XDP_DROP;
+
+	hdr->tcp_len = tcp_len;
+
+	return XDP_TX;
+}
 
 static __always_inline int tcp_dissect(
 	void *data,
