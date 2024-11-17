@@ -276,9 +276,7 @@ static int xdpcookie_detach(unsigned int ifindex, __u32 prog_id)
 
 static void xdpcookie_write_vlans(struct xdpcookie_bpf *obj, __u16 vlans[])
 {
-    const unsigned COUNT = sizeof(obj->rodata->conf.vlans) / sizeof(obj->rodata->conf.vlans[0]);
-
-    for (unsigned i = 0; i < COUNT; i++) {
+    for (unsigned i = 0; i < MAX_VLANS_ALLOWED; i++) {
         if (vlans[i] == 0)
             break;
 
@@ -289,9 +287,7 @@ static void xdpcookie_write_vlans(struct xdpcookie_bpf *obj, __u16 vlans[])
 
 static void xdpcookie_write_ports(struct xdpcookie_bpf *obj, __u16 ports[])
 {
-    const unsigned COUNT = sizeof(obj->rodata->conf.ports) / sizeof(obj->rodata->conf.ports[0]);
-
-    for (unsigned i = 0; i < COUNT; i++) {
+    for (unsigned i = 0; i < MAX_PORTS_ALLOWED; i++) {
         if (ports[i] == 0)
             break;
 
