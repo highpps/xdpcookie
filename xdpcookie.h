@@ -8,6 +8,11 @@
 #define MAX_VLANS_ALLOWED 4
 #define MAX_PORTS_ALLOWED 8
 
+enum xdpcookie_cntr {
+	COUNTER_SYNACK = 0,
+	__COUNTER_MAX,
+};
+
 struct xdpcookie_opts {
 	__u16 mss4;
 	__u16 mss6;

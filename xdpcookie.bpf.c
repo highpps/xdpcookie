@@ -323,9 +323,9 @@ static __always_inline void values_get_tcpipopts(
 	*ttl = conf.opts.ttl;
 }
 
-static __always_inline void values_inc_synacks()
+static __always_inline void increment_counter(enum xdpcookie_cntr cntr)
 {
-	__u32 key = 0;
+	__u32 key = cntr;
 	__u64 *value;
 
 	value = bpf_map_lookup_elem(&values, &key);
@@ -806,8 +806,6 @@ static __always_inline int xdpcookie_gen_synack(
 	if (bpf_xdp_adjust_tail(ctx, new_pkt_size - old_pkt_size))
 		return XDP_ABORTED;
 
-	values_inc_synacks();
-
 	return XDP_TX;
 }
 
@@ -927,6 +925,8 @@ static __always_inline int xdpcookie_handle_syn(
 	ret = xdpcookie_gen_synack(ctx, hdr);
 	if (ret != XDP_TX)
 		return ret;
+
+	increment_counter(COUNTER_SYNACK);
 
 	return XDP_TX;
 }
