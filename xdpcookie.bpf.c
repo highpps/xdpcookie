@@ -739,12 +739,6 @@ static __always_inline int syncookie_handle_syn(
 	__u32 cookie;
 	__s64 value;
 
-	/* Checksum is not yet verified, but both checksum failure and TCP
-	 * header checks return XDP_DROP, so the order doesn't matter.
-	 */
-	if (hdr->tcp->fin || hdr->tcp->rst)
-		return XDP_DROP;
-
 	if (hdr->ipv4) {
 		/* Check the IPv4 and TCP checksums before creating a SYNACK. */
 		value = bpf_csum_diff(0, 0, (void *)hdr->ipv4, hdr->ipv4->ihl * 4, 0);
@@ -854,55 +848,12 @@ static __always_inline int syncookie_handle_syn(
 	return XDP_TX;
 }
 
-static __always_inline int syncookie_handle_ack(struct header_pointers *hdr)
-{
-	int err;
-
-	if (hdr->tcp->rst)
-		return XDP_DROP;
-
-	if (hdr->ipv4)
-		err = bpf_tcp_raw_check_syncookie_ipv4(hdr->ipv4, hdr->tcp);
-	else if (hdr->ipv6)
-		err = bpf_tcp_raw_check_syncookie_ipv6(hdr->ipv6, hdr->tcp);
-	else
-		return XDP_ABORTED;
-
-	if (err)
-		return XDP_DROP;
-
-	return XDP_PASS;
-}
-
-static __always_inline int syncookie_part1(
-	void *ctx,
-	void *data,
-	void *data_end,
+static __always_inline int syncookie_part2(
+	struct xdp_md *ctx,
 	struct header_pointers *hdr)
 {
-	int ret;
-
-	ret = parse_headers(ctx, hdr);
-	if (ret != XDP_TX)
-		return ret;
-
-	/* Issue SYN cookies on allowed ports, allow SYN packets on other
-	 * ports.
-	 */
-	if (!check_port_allowed(bpf_ntohs(hdr->tcp->dest)))
-		return XDP_PASS;
-
-	ret = tcp_lookup(ctx, hdr);
-	if (ret != XDP_TX)
-		return ret;
-
-	/* Packet is TCP and doesn't belong to an established connection. */
-
-	if ((hdr->tcp->syn ^ hdr->tcp->ack) != 1)
-		return XDP_DROP;
-
-	if (hdr->tcp->ack)
-		return syncookie_handle_ack(hdr);
+	void *data_end;
+	void *data;
 
 	/* Grow the TCP header to TCP_MAXLEN to be able to pass any hdr->tcp_len
 	 * to bpf_tcp_raw_gen_syncookie_ipv{4,6} and pass the verifier.
@@ -910,12 +861,9 @@ static __always_inline int syncookie_part1(
 	if (bpf_xdp_adjust_tail(ctx, TCP_MAXLEN - hdr->tcp_len))
 		return XDP_ABORTED;
 
-	return XDP_TX;
-}
+	data_end = (void *)(long) ctx->data_end;
+	data = (void *)(long) ctx->data;
 
-static __always_inline int syncookie_part2(void *ctx, void *data, void *data_end,
-					   struct header_pointers *hdr)
-{
 	if (hdr->ipv4) {
 		hdr->eth = data;
 		hdr->ipv4 = (void *)hdr->eth + sizeof(*hdr->eth);
@@ -946,21 +894,64 @@ static __always_inline int syncookie_part2(void *ctx, void *data, void *data_end
 	return syncookie_handle_syn(hdr, ctx, data, data_end);
 }
 
+static __always_inline int xdpcookie_handle_syn(
+	struct xdp_md *ctx,
+	struct header_pointers *hdr)
+{
+	if (hdr->tcp->fin || hdr->tcp->rst)
+		return XDP_DROP;
+
+	return syncookie_part2(ctx, hdr);
+}
+
+static __always_inline int xdpcookie_handle_ack(
+	struct header_pointers *hdr)
+{
+	int ret;
+
+	if (hdr->tcp->rst)
+		return XDP_DROP;
+
+	if (hdr->ipv4)
+		ret = bpf_tcp_raw_check_syncookie_ipv4(hdr->ipv4, hdr->tcp);
+	else if (hdr->ipv6)
+		ret = bpf_tcp_raw_check_syncookie_ipv6(hdr->ipv6, hdr->tcp);
+	else
+		return XDP_ABORTED;
+
+	if (ret)
+		return XDP_DROP;
+
+	return XDP_PASS;
+}
+
 int xdpcookie_core(struct xdp_md *ctx)
 {
-	void *data_end = (void *)(long)ctx->data_end;
-	void *data = (void *)(long)ctx->data;
 	struct header_pointers hdr;
 	int ret;
 
-	ret = syncookie_part1(ctx, data, data_end, &hdr);
+	// Parse & check packet is TCP
+	ret = parse_headers(ctx, &hdr);
 	if (ret != XDP_TX)
 		return ret;
 
-	data_end = (void *)(long)ctx->data_end;
-	data = (void *)(long)ctx->data;
+	// SYN packet on other than allowed port?
+	if (!check_port_allowed(bpf_ntohs(hdr.tcp->dest)))
+		return XDP_PASS;
 
-	return syncookie_part2(ctx, data, data_end, &hdr);
+	// Established connection?
+	ret = tcp_lookup(ctx, &hdr);
+	if (ret != XDP_TX)
+		return ret;
+
+	// SYN / ACK mutually non exclusive
+	if ((hdr.tcp->syn ^ hdr.tcp->ack) != 1)
+		return XDP_DROP;
+
+	if (hdr.tcp->syn)
+		return xdpcookie_handle_syn(ctx, &hdr);
+	else
+		return xdpcookie_handle_ack(&hdr);
 }
 
 extern int bpf_xdp_metadata_rx_vlan_tag(
