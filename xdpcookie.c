@@ -32,13 +32,16 @@
 #define VERSION unknown version
 #endif
 
-static const char *short_options = "Vhadi:4:6:w:t:p:v:";
+static const char *short_options = "VhadcACi:4:6:w:t:p:v:";
 
 static struct option long_options[] = {
     { "version", no_argument, NULL, 'V' },
     { "help", no_argument, NULL, 'h' },
     { "attach", no_argument, NULL, 'a' },
     { "detach", no_argument, NULL, 'd' },
+    { "calcsum", no_argument, NULL, 'c' },
+    { "checksum", no_argument, NULL, 'C' },
+    { "checkack", no_argument, NULL, 'A' },
     { "iface", required_argument, NULL, 'i' },
     { "mss4", required_argument, NULL, '4' },
     { "mss6", required_argument, NULL, '6' },
@@ -52,7 +55,7 @@ static struct option long_options[] = {
 static noreturn void usage(const char *progname)
 {
     fprintf(stderr, "Usage: %s -a -i<iface> -p<port1> [-p<port2> ...] [-v<vlan1> ...] "
-        "[-4 <mssip4> -6<mssip6> -w<wscale> -t<ttl>]\n", progname);
+        "[-4<mssip4> -6<mssip6> -w<wscale> -t<ttl>] [-cCA]\n", progname);
     fprintf(stderr, "       %s -d -i<iface>\n", progname);
     fprintf(stderr, "       %s -i<iface>\n", progname);
     fprintf(stderr, "       %s -h\n", progname);
@@ -152,6 +155,15 @@ static void parse_arguments(
             break;
         case 'd':
             *detach = true;
+            break;
+        case 'c':
+            conf->calc_sums = true;
+            break;
+        case 'C':
+            conf->check_sums = true;
+            break;
+        case 'A':
+            conf->check_acks = true;
             break;
         default:
             usage(progname);
@@ -321,6 +333,30 @@ static void xdpcookie_write_tcpipopts(
     }
 }
 
+static void xdpcookie_write_conf(
+    struct xdpcookie_bpf *obj,
+    struct xdpcookie_conf *conf)
+{
+    xdpcookie_write_vlans(obj, conf->vlans);
+    xdpcookie_write_ports(obj, conf->ports);
+    xdpcookie_write_tcpipopts(obj, &conf->opts);
+
+    if (conf->check_sums != 0) {
+        obj->rodata->conf.check_sums = conf->check_sums;
+        fprintf(stderr, "Check RX checksums\n");
+    }
+
+    if (conf->check_acks != 0) {
+        obj->rodata->conf.check_acks = conf->check_acks;
+        fprintf(stderr, "Check ACK responses\n");
+    }
+
+    if (conf->calc_sums != 0) {
+        obj->rodata->conf.calc_sums = conf->calc_sums;
+        fprintf(stderr, "Calculate TX checksums\n");
+    }
+}
+
 static int xdpcookie_attach(
     unsigned int ifindex,
     struct xdpcookie_conf *conf,
@@ -354,9 +390,7 @@ static int xdpcookie_attach(
         return ret;
     }
 
-    xdpcookie_write_vlans(obj, conf->vlans);
-    xdpcookie_write_ports(obj, conf->ports);
-    xdpcookie_write_tcpipopts(obj, &conf->opts);
+    xdpcookie_write_conf(obj, conf);
 
     ret = xdpcookie_bpf__load(obj);
     if (ret < 0) {

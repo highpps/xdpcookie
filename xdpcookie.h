@@ -24,4 +24,7 @@ struct xdpcookie_conf {
 	__u16 vlans[MAX_VLANS_ALLOWED];
 	__u16 ports[MAX_PORTS_ALLOWED];
 	struct xdpcookie_opts opts;
+	bool check_sums;
+	bool check_acks;
+	bool calc_sums;
 };
