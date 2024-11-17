@@ -702,11 +702,22 @@ static __always_inline int syncookie_handle_syn(
 	__u32 cookie;
 	__s64 value;
 
+	if ((void *) hdr->tcp + TCP_MAXLEN > data_end)
+		return XDP_ABORTED;
+
 	if (hdr->ipv4) {
 		ip_len = sizeof(*hdr->ipv4);
+
+		if (hdr->ipv4 + 1 > data_end)
+			return XDP_ABORTED;
+
 		value = bpf_tcp_raw_gen_syncookie_ipv4(hdr->ipv4, hdr->tcp, hdr->tcp_len);
 	} else if (hdr->ipv6) {
 		ip_len = sizeof(*hdr->ipv6);
+
+		if (hdr->ipv6 + 1 > data_end)
+			return XDP_ABORTED;
+
 		value = bpf_tcp_raw_gen_syncookie_ipv6(hdr->ipv6, hdr->tcp, hdr->tcp_len);
 	} else {
 		return XDP_ABORTED;
