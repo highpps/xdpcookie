@@ -106,19 +106,6 @@ static void parse_arguments(
     if (argc < 2)
         usage(progname);
 
-    *ifindex = 0;
-
-    conf->ports[port_idx] = 0;
-    conf->vlans[vlan_idx] = 0;
-
-    conf->opts.mss4 = 0;
-    conf->opts.mss6 = 0;
-    conf->opts.wscale = 0;
-    conf->opts.ttl = 0;
-
-    *attach = false;
-    *detach = false;
-
     while (true) {
         int opt = getopt_long(argc, argv, short_options, long_options, NULL);
         if (opt == -1)
@@ -421,11 +408,11 @@ static int xdpcookie_read_counters(int values_fd)
 int main(int argc, char *argv[])
 {
     struct xdpcookie_conf conf = {};
-    unsigned int ifindex;
+    unsigned int ifindex = 0;
 
-    int attach;
-    int detach;
-    int show;
+    int attach = false;
+    int detach = false;
+    int show = false;
 
     __u32 prog_id;
     int ret;
