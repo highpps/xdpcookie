@@ -6,6 +6,7 @@
 // Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
 #include "vmlinux.h"
+#include "xdpcookie.h"
 
 #include <asm/errno.h>
 
@@ -52,28 +53,17 @@
 #define IPV4_MAXLEN 60
 #define TCP_MAXLEN 60
 
-#define DEFAULT_MSS4 1460
-#define DEFAULT_MSS6 1440
-#define DEFAULT_WSCALE 7
-#define DEFAULT_TTL 64
-
-#define MAX_VLANS_ALLOWED 4
-#define MAX_PORTS_ALLOWED 8
-
 #define MAX_PACKET_OFF 0xffff
 
-const volatile struct {
-	__u16 vlans[MAX_VLANS_ALLOWED];
-	__u16 ports[MAX_PORTS_ALLOWED];
-	__u16 mss4;
-	__u16 mss6;
-	__u8 wscale;
-	__u8 ttl;
-} conf = {
-	.mss4 = DEFAULT_MSS4,
-	.mss6 = DEFAULT_MSS6,
-	.wscale = DEFAULT_WSCALE,
-	.ttl = DEFAULT_TTL,
+const volatile struct xdpcookie_conf conf = {
+	.vlans = {},
+	.ports = {},
+	.opts = {
+		.mss4 = DEFAULT_MSS4,
+		.mss6 = DEFAULT_MSS6,
+		.wscale = DEFAULT_WSCALE,
+		.ttl = DEFAULT_TTL,
+	},
 };
 
 #define swap(a, b) \
@@ -328,9 +318,9 @@ static __always_inline void values_get_tcpipopts(
 	__u8 *ttl,
 	bool ipv6)
 {
-	*mss = ipv6 ? conf.mss6 : conf.mss4;
-	*wscale = conf.wscale;
-	*ttl = conf.ttl;
+	*mss = ipv6 ? conf.opts.mss6 : conf.opts.mss4;
+	*wscale = conf.opts.wscale;
+	*ttl = conf.opts.ttl;
 }
 
 static __always_inline void values_inc_synacks()

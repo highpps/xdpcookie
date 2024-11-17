@@ -5,6 +5,9 @@
 // Based on implementation created by Maxim Mikityanskiy <maximmi@nvidia.com>
 // Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
+#include <bpf/libbpf.h>
+
+#include "xdpcookie.h"
 #include "xdpcookie.bpf.h"
 
 #include <bpf/bpf.h>
@@ -317,22 +320,22 @@ static void xdpcookie_write_tcpipopts(
     __u8 ttl)
 {
     if (mss4 != 0) {
-        obj->rodata->conf.mss4 = mss4;
+        obj->rodata->conf.opts.mss4 = mss4;
         fprintf(stderr, "IPv4 MSS %u\n", mss4);
     }
 
     if (mss6 != 0) {
-        obj->rodata->conf.mss6 = mss6;
+        obj->rodata->conf.opts.mss6 = mss6;
         fprintf(stderr, "IPv6 MSS %u\n", mss6);
     }
 
     if (wscale != 0) {
-        obj->rodata->conf.wscale = wscale;
+        obj->rodata->conf.opts.wscale = wscale;
         fprintf(stderr, "Window scale %u\n", wscale);
     }
 
     if (ttl != 0) {
-        obj->rodata->conf.ttl = ttl;
+        obj->rodata->conf.opts.ttl = ttl;
         fprintf(stderr, "TTL %u\n", ttl);
     }
 }
