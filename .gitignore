@@ -1,0 +1,4 @@
+xdpcookie
+vmlinux.h
+*.bpf.h
+*.o
