@@ -823,8 +823,7 @@ static __always_inline int syncookie_part2(void *ctx, void *data, void *data_end
 			       syncookie_handle_ack(hdr);
 }
 
-SEC("xdp")
-int xdpcookie(struct xdp_md *ctx)
+int xdpcookie_core(struct xdp_md *ctx)
 {
 	void *data_end = (void *)(long)ctx->data_end;
 	void *data = (void *)(long)ctx->data;
@@ -839,6 +838,19 @@ int xdpcookie(struct xdp_md *ctx)
 	data = (void *)(long)ctx->data;
 
 	return syncookie_part2(ctx, data, data_end, &hdr);
+}
+
+SEC("xdp")
+int xdpcookie(struct xdp_md *ctx)
+{
+	int ret;
+
+	// Evaluate the packet
+	ret = xdpcookie_core(ctx);
+	if (ret != XDP_TX)
+		return ret;
+
+	return XDP_TX;
 }
 
 char _license[] SEC("license") = "GPL";
