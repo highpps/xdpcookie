@@ -19,6 +19,9 @@ README := README.md
 MANPAGE := $(USER_PROG).$(MANSEC)
 MANGZ := $(USER_PROG).$(MANSEC).gz
 
+PGKNAME := $(USER_PROG)-$(VERSION)
+TARGZ := $(PGKNAME).tar.gz
+
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 DATADIR ?= $(PREFIX)/share
@@ -59,13 +62,21 @@ $(MANGZ): $(MKDEPS) $(README)
 	sed -e "1i%$(USER_PROG)($(MANSEC)) $(VERSION) | $(USER_PROG) documentation" $(README) | $(PANDOC) -s -f markdown -t man -o $(MANPAGE)
 	gzip -f $(MANPAGE)
 
-.PHONY: man install clean
+$(TARGZ): $(MKDEPS)
+	git archive --prefix=$(PKGNAME)/ -o $@ HEAD
+
+.PHONY: man pack install deb clean
 
 man: $(MANGZ)
+
+pack: $(TARGZ)
 
 install:
 	install -D -t $(DESTDIR)$(BINDIR) $(USER_PROG)
 	install -D -t $(DESTDIR)$(MANDIR) $(MANGZ)
 
+deb: $(MKDEPS)
+	debuild -b -uc -us
+
 clean:
-	rm -f ${VMLINUX} $(USER_PROG) $(EBPF_OBJS) $(EBPF_SKEL) $(MANGZ)
+	rm -f ${VMLINUX} $(USER_PROG) $(EBPF_OBJS) $(EBPF_SKEL) $(MANGZ) $(TARGZ)

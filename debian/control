@@ -1,0 +1,15 @@
+Source: xdpcookie
+Section: net
+Priority: optional
+Maintainer: Jan Kucera <kucera@highpps.net>
+Build-Depends: debhelper-compat (= 13), make, pkg-config, gcc, clang, bpftool, libbpf-dev, libc6-dev-i386, pandoc
+Standards-Version: 4.7.0
+Homepage: https://github.com/highpps/xdpcookie
+
+Package: xdpcookie
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: XDP-based synproxy implementation
+	xdpcookie is a XDP-based synproxy implementation which moves initial
+	SYN+ACK conversation into XDP hook of a network interface.
+	It accelerates the original synproxy in nftables with a custom eBPF program.

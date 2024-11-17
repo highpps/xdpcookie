@@ -263,7 +263,7 @@ The implementation is originally based on Linux Kernel BPF selftests (https://gi
 Install dependencies:
 ---------------------
 
-`apt install make pkg-config gcc clang bpftool libbpf-dev libc6-dev-i386 pandoc`
+`apt install make pkg-config gcc clang bpftool libbpf-dev libc6-dev-i386 pandoc dpkg-dev debhelper`
 
 Build from sources:
 -------------------
@@ -274,6 +274,11 @@ Installation:
 -------------
 
 `sudo make install`
+
+Build debian package:
+---------------------
+
+`dpkg-buildpackage -b -us -uc`
 
 # LICENSE
 
