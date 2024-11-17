@@ -557,63 +557,6 @@ static __always_inline int parse_headers(
 	return XDP_TX;
 }
 
-static __always_inline int tcp_dissect(
-	void *data,
-	void *data_end,
-	struct header_pointers *hdr)
-{
-	hdr->eth = data;
-	if (hdr->eth + 1 > data_end)
-		return XDP_DROP;
-
-	switch (bpf_ntohs(hdr->eth->h_proto)) {
-	case ETH_P_IP:
-		hdr->ipv6 = NULL;
-
-		hdr->ipv4 = (void *)hdr->eth + sizeof(*hdr->eth);
-		if (hdr->ipv4 + 1 > data_end)
-			return XDP_DROP;
-		if (hdr->ipv4->ihl * 4 < sizeof(*hdr->ipv4))
-			return XDP_DROP;
-		if (hdr->ipv4->version != 4)
-			return XDP_DROP;
-
-		if (hdr->ipv4->protocol != IPPROTO_TCP)
-			return XDP_PASS;
-
-		hdr->tcp = (void *)hdr->ipv4 + hdr->ipv4->ihl * 4;
-		break;
-	case ETH_P_IPV6:
-		hdr->ipv4 = NULL;
-
-		hdr->ipv6 = (void *)hdr->eth + sizeof(*hdr->eth);
-		if (hdr->ipv6 + 1 > data_end)
-			return XDP_DROP;
-		if (hdr->ipv6->version != 6)
-			return XDP_DROP;
-
-		/* XXX: Extension headers are not supported and could circumvent
-		 * XDP SYN flood protection.
-		 */
-		if (hdr->ipv6->nexthdr != NEXTHDR_TCP)
-			return XDP_PASS;
-
-		hdr->tcp = (void *)hdr->ipv6 + sizeof(*hdr->ipv6);
-		break;
-	default:
-		/* XXX: VLANs will circumvent XDP SYN flood protection. */
-		return XDP_PASS;
-	}
-
-	if (hdr->tcp + 1 > data_end)
-		return XDP_DROP;
-	hdr->tcp_len = hdr->tcp->doff * 4;
-	if (hdr->tcp_len < sizeof(*hdr->tcp))
-		return XDP_DROP;
-
-	return XDP_TX;
-}
-
 static __always_inline int tcp_lookup(void *ctx, struct header_pointers *hdr)
 {
 	struct bpf_ct_opts___local ct_lookup_opts = {
@@ -945,7 +888,7 @@ static __always_inline int syncookie_part1(
 {
 	int ret;
 
-	ret = tcp_dissect(data, data_end, hdr);
+	ret = parse_headers(ctx, hdr);
 	if (ret != XDP_TX)
 		return ret;
 
