@@ -624,11 +624,11 @@ static __always_inline int syncookie_handle_syn(
 	if (hdr->tcp->fin || hdr->tcp->rst)
 		return XDP_DROP;
 
-	/* Issue SYN cookies on allowed ports, drop SYN packets on blocked
+	/* Issue SYN cookies on allowed ports, allow SYN packets on other
 	 * ports.
 	 */
 	if (!check_port_allowed(bpf_ntohs(hdr->tcp->dest)))
-		return XDP_DROP;
+		return XDP_PASS;
 
 	if (hdr->ipv4) {
 		/* Check the IPv4 and TCP checksums before creating a SYNACK. */
