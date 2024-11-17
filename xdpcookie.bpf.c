@@ -917,9 +917,11 @@ static __always_inline int xdpcookie_handle_syn(
 	if (ret != XDP_TX)
 		return ret;
 
-	ret = xdpcookie_check_sums(ctx, hdr);
-	if (ret != XDP_TX)
-		return ret;
+	if (conf.check_sums) {
+		ret = xdpcookie_check_sums(ctx, hdr);
+		if (ret != XDP_TX)
+			return ret;
+	}
 
 	ret = xdpcookie_gen_synack(ctx, hdr);
 	if (ret != XDP_TX)
