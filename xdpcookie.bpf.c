@@ -901,6 +901,9 @@ static __always_inline int syncookie_part1(
 	if ((hdr->tcp->syn ^ hdr->tcp->ack) != 1)
 		return XDP_DROP;
 
+	if (hdr->tcp->ack)
+		return syncookie_handle_ack(hdr);
+
 	/* Grow the TCP header to TCP_MAXLEN to be able to pass any hdr->tcp_len
 	 * to bpf_tcp_raw_gen_syncookie_ipv{4,6} and pass the verifier.
 	 */
@@ -940,8 +943,7 @@ static __always_inline int syncookie_part2(void *ctx, void *data, void *data_end
 	if (hdr->tcp_len < sizeof(*hdr->tcp))
 		return XDP_ABORTED;
 
-	return hdr->tcp->syn ? syncookie_handle_syn(hdr, ctx, data, data_end) :
-			       syncookie_handle_ack(hdr);
+	return syncookie_handle_syn(hdr, ctx, data, data_end);
 }
 
 int xdpcookie_core(struct xdp_md *ctx)
