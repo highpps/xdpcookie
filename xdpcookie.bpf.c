@@ -56,9 +56,16 @@
 #define DEFAULT_MSS6 1440
 #define DEFAULT_WSCALE 7
 #define DEFAULT_TTL 64
-#define MAX_ALLOWED_PORTS 8
+
+#define MAX_VLANS_ALLOWED 4
+#define MAX_PORTS_ALLOWED 8
 
 #define MAX_PACKET_OFF 0xffff
+
+const volatile struct {
+    __u16 vlans[MAX_VLANS_ALLOWED];
+    __u16 ports[MAX_PORTS_ALLOWED];
+} conf = {};
 
 #define swap(a, b) \
 	do { typeof(a) __tmp = (a); (a) = (b); (b) = __tmp; } while (0)
@@ -76,13 +83,6 @@ struct {
 	__type(value, __u64);
 	__uint(max_entries, 2);
 } values SEC(".maps");
-
-struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);
-	__type(key, __u32);
-	__type(value, __u16);
-	__uint(max_entries, MAX_ALLOWED_PORTS);
-} allowed_ports SEC(".maps");
 
 /* Some symbols defined in net/netfilter/nf_conntrack_bpf.c are unavailable in
  * vmlinux.h if CONFIG_NF_CONNTRACK=m, so they are redefined locally.
@@ -346,29 +346,6 @@ static __always_inline void values_inc_synacks()
 	value = bpf_map_lookup_elem(&values, &key);
 	if (value)
 		__sync_fetch_and_add(value, 1);
-}
-
-static __always_inline bool check_port_allowed(__u16 port)
-{
-	for (__u32 i = 0; i < MAX_ALLOWED_PORTS; i++) {
-		__u32 key = i;
-		__u16 *value;
-
-		value = bpf_map_lookup_elem(&allowed_ports, &key);
-
-		if (!value)
-			break;
-		/* 0 is a terminator value. Check it first to avoid matching on
-		 * a forbidden port == 0 and returning true.
-		 */
-		if (*value == 0)
-			break;
-
-		if (*value == port)
-			return true;
-	}
-
-	return false;
 }
 
 struct hdr_cursor {
@@ -931,6 +908,21 @@ static __always_inline int xdpcookie_handle_ack(
 	return XDP_PASS;
 }
 
+static __always_inline bool check_port_allowed(__u16 port)
+{
+	#pragma unroll
+	for (__u32 i = 0; i < MAX_PORTS_ALLOWED; i++) {
+
+		if (conf.ports[i] == 0)
+			break;
+
+		if (conf.ports[i] == port)
+			return true;
+	}
+
+	return false;
+}
+
 int xdpcookie_core(struct xdp_md *ctx)
 {
 	struct header_pointers hdr;
@@ -1026,6 +1018,25 @@ static __always_inline int vlan_tag_push(
 	return XDP_TX;
 }
 
+static __always_inline bool check_vlan_allowed(__u16 vlan)
+{
+	// Allow packets without VLAN if no VLAN specified
+	if (conf.vlans[0] == 0 && vlan == 0)
+		return true;
+
+	#pragma unroll
+	for (__u32 i = 0; i < MAX_VLANS_ALLOWED; i++) {
+
+		if (conf.vlans[i] == 0)
+			break;
+
+		if (conf.vlans[i] == vlan)
+			return true;
+	}
+
+	return false;
+}
+
 SEC("xdp")
 int xdpcookie(struct xdp_md *ctx)
 {
@@ -1035,6 +1046,10 @@ int xdpcookie(struct xdp_md *ctx)
 
 	// Read VLAN tag from metadata
 	vlan_tag_read(ctx, &vlan_proto, &vlan_tci);
+
+	// Packet in other than allowed VLAN?
+	if (!check_vlan_allowed(vlan_tci))
+		return XDP_PASS;
 
 	// Evaluate the packet
 	ret = xdpcookie_core(ctx);

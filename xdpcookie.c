@@ -29,7 +29,7 @@
 #define VERSION unknown version
 #endif
 
-static const char *short_options = "Vhadi:4:6:w:t:p:";
+static const char *short_options = "Vhadi:4:6:w:t:p:v:";
 
 static struct option long_options[] = {
     { "version", no_argument, NULL, 'V' },
@@ -42,17 +42,18 @@ static struct option long_options[] = {
     { "wscale", required_argument, NULL, 'w' },
     { "ttl", required_argument, NULL, 't' },
     { "port", required_argument, NULL, 'p' },
+    { "vlan", required_argument, NULL, 'v' },
     { NULL, 0, NULL, 0 },
 };
 
 static noreturn void usage(const char *progname)
 {
-    fprintf(stderr, "Usage: %s -a -i<iface> -p<port1> [-p<port2> ...] "
+    fprintf(stderr, "Usage: %s -a -i<iface> -p<port1> [-p<port2> ...] [-v<vlan1> ...] "
         "[-4 <mssip4> -6<mssip6> -w<wscale> -t<ttl>]\n", progname);
     fprintf(stderr, "       %s -d -i<iface>\n", progname);
     fprintf(stderr, "       %s -i<iface>\n", progname);
     fprintf(stderr, "       %s -h\n", progname);
-    fprintf(stderr, "       %s -v\n", progname);
+    fprintf(stderr, "       %s -V\n", progname);
 
     exit(EXIT_FAILURE);
 }
@@ -91,6 +92,7 @@ static void parse_arguments(
     unsigned int *ifindex,
     __u64 *tcpipopts,
     __u16 ports[],
+    __u16 vlans[],
     int *attach,
     int *detach,
     int *show)
@@ -101,6 +103,7 @@ static void parse_arguments(
     unsigned long mss4, wscale, ttl;
     unsigned int tcpipopts_mask = 0;
     unsigned int port_idx = 0;
+    unsigned int vlan_idx = 0;
 
     if (argc < 2)
         usage(progname);
@@ -109,6 +112,7 @@ static void parse_arguments(
     *tcpipopts = 0;
 
     ports[port_idx] = 0;
+    vlans[vlan_idx] = 0;
 
     *attach = false;
     *detach = false;
@@ -147,6 +151,10 @@ static void parse_arguments(
         case 'p':
             ports[port_idx++] = parse_unsigned(progname, optarg, UINT16_MAX);
             ports[port_idx] = 0;
+            break;
+        case 'v':
+            vlans[vlan_idx++] = parse_unsigned(progname, optarg, 4095);
+            vlans[vlan_idx] = 0;
             break;
         case 'a':
             *attach = true;
@@ -216,22 +224,18 @@ static int xdpcookie_get_maps(__u32 prog_id, __u32 map_ids[], __u32 *nr_map_ids)
     return ret;
 }
 
-static void xdpcookie_close_maps(int values_fd, int ports_fd)
+static void xdpcookie_close_maps(int values_fd)
 {
     if (values_fd != -1)
         close(values_fd);
-
-    if (ports_fd != -1)
-        close(ports_fd);
 }
 
-static int xdpcookie_open_maps(__u32 prog_id, int *values_map_fd, int *ports_map_fd)
+static int xdpcookie_open_maps(__u32 prog_id, int *values_map_fd)
 {
     __u32 map_ids[8];
     __u32 nr_map_ids = 8;
 
     *values_map_fd = -1;
-    *ports_map_fd = -1;
 
     int ret = xdpcookie_get_maps(prog_id, map_ids, &nr_map_ids);
     if (ret < 0) {
@@ -239,8 +243,8 @@ static int xdpcookie_open_maps(__u32 prog_id, int *values_map_fd, int *ports_map
         return ret;
     }
 
-    if (nr_map_ids < 2) {
-        fprintf(stderr, "xdpcookie_get_maps() found %u BPF maps, 2 expected\n", nr_map_ids);
+    if (nr_map_ids < 1) {
+        fprintf(stderr, "xdpcookie_get_maps() found %u BPF maps, 1 expected\n", nr_map_ids);
         return -ENOENT;
     }
 
@@ -253,14 +257,14 @@ static int xdpcookie_open_maps(__u32 prog_id, int *values_map_fd, int *ports_map
         map_fd = bpf_map_get_fd_by_id(map_ids[i]);
         if (map_fd < 0) {
             fprintf(stderr, "bpf_map_get_fd_by_id() has failed: %d\n", map_fd);
-            xdpcookie_close_maps(*values_map_fd, *ports_map_fd);
+            xdpcookie_close_maps(*values_map_fd);
             return map_fd;
         }
 
         ret = bpf_obj_get_info_by_fd(map_fd, &map_info, &info_len);
         if (ret < 0) {
             fprintf(stderr, "bpf_obj_get_info_by_fd() has failed: %d\n", ret);
-            xdpcookie_close_maps(*values_map_fd, *ports_map_fd);
+            xdpcookie_close_maps(*values_map_fd);
             close(map_fd);
         }
 
@@ -268,18 +272,14 @@ static int xdpcookie_open_maps(__u32 prog_id, int *values_map_fd, int *ports_map
             *values_map_fd = map_fd;
             continue;
         }
-        if (strcmp(map_info.name, "allowed_ports") == 0) {
-            *ports_map_fd = map_fd;
-            continue;
-        }
 
         close(map_fd);
     }
 
-    if (*values_map_fd != -1 && *ports_map_fd != -1)
+    if (*values_map_fd != -1)
         return 0;
 
-    xdpcookie_close_maps(*values_map_fd, *ports_map_fd);
+    xdpcookie_close_maps(*values_map_fd);
     return -ENOENT;
 }
 
@@ -293,7 +293,33 @@ static int xdpcookie_detach(unsigned int ifindex, __u32 prog_id)
     return ret;
 }
 
-static int xdpcookie_attach(unsigned int ifindex, __u32 *prog_id)
+static void xdpcookie_write_vlans(struct xdpcookie_bpf *obj, __u16 vlans[])
+{
+    const unsigned COUNT = sizeof(obj->rodata->conf.vlans) / sizeof(obj->rodata->conf.vlans[0]);
+
+    for (unsigned i = 0; i < COUNT; i++) {
+        if (vlans[i] == 0)
+            break;
+
+        obj->rodata->conf.vlans[i] = vlans[i];
+        fprintf(stderr, "Allowed VLAN %u\n", vlans[i]);
+    }
+}
+
+static void xdpcookie_write_ports(struct xdpcookie_bpf *obj, __u16 ports[])
+{
+    const unsigned COUNT = sizeof(obj->rodata->conf.ports) / sizeof(obj->rodata->conf.ports[0]);
+
+    for (unsigned i = 0; i < COUNT; i++) {
+        if (ports[i] == 0)
+            break;
+
+        obj->rodata->conf.ports[i] = ports[i];
+        fprintf(stderr, "Allowed TCP port %u\n", ports[i]);
+    }
+}
+
+static int xdpcookie_attach(unsigned int ifindex, __u16 ports[], __u16 vlans[], __u32 *prog_id)
 {
     int flags = XDP_FLAGS_DRV_MODE; // Always attach the program in driver mode
     struct bpf_prog_info info = {};
@@ -321,6 +347,9 @@ static int xdpcookie_attach(unsigned int ifindex, __u32 *prog_id)
         xdpcookie_bpf__destroy(obj);
         return ret;
     }
+
+    xdpcookie_write_vlans(obj, vlans);
+    xdpcookie_write_ports(obj, ports);
 
     ret = xdpcookie_bpf__load(obj);
     if (ret < 0) {
@@ -377,35 +406,12 @@ static int xdpcookie_write_tcpipopts(int values_fd, __u64 tcpipopts)
     return ret;
 }
 
-static int xdpcookie_write_ports(int ports_fd, __u16 ports[])
-{
-    __u32 port_idx = 0;
-
-    int ret;
-
-    for (port_idx = 0; ports[port_idx] != 0; port_idx++) {
-        ret = bpf_map_update_elem(ports_fd, &port_idx, &ports[port_idx], BPF_ANY);
-        if (ret < 0) {
-            fprintf(stderr, "bpf_map_update_elem() has failed: %d\n", ret);
-            return ret;
-        }
-
-        fprintf(stderr, "Added port %u\n", ports[port_idx]);
-    }
-
-    ret = bpf_map_update_elem(ports_fd, &port_idx, &ports[port_idx], BPF_ANY);
-    if (ret < 0)
-        fprintf(stderr, "bpf_map_update_elem() has failed: %d\n", ret);
-
-    return ret;
-}
-
 int main(int argc, char *argv[])
 {
-    int ports_fd;
     int values_fd;
     unsigned int ifindex;
     __u16 ports[argc];
+    __u16 vlans[argc];
     __u64 tcpipopts;
     int attach;
     int detach;
@@ -419,7 +425,7 @@ int main(int argc, char *argv[])
         .rlim_max = RLIM_INFINITY,
     };
 
-    parse_arguments(argc, argv, &ifindex, &tcpipopts, ports, &attach, &detach, &show);
+    parse_arguments(argc, argv, &ifindex, &tcpipopts, ports, vlans, &attach, &detach, &show);
 
     ret = setrlimit(RLIMIT_MEMLOCK, &rlim);
     if (ret < 0) {
@@ -447,38 +453,27 @@ int main(int argc, char *argv[])
     }
 
     if (attach) {
-        ret = xdpcookie_attach(ifindex, &prog_id);
+        ret = xdpcookie_attach(ifindex, ports, vlans, &prog_id);
         if (ret < 0) {
             fprintf(stderr, "xdpcookie_attach(%d) has failed: %d\n", ifindex, ret);
             return EXIT_FAILURE;
         }
     }
 
-    ret = xdpcookie_open_maps(prog_id, &values_fd, &ports_fd);
+    ret = xdpcookie_open_maps(prog_id, &values_fd);
     if (ret < 0) {
         fprintf(stderr, "xdpcookie_open_maps() has failed: %d\n", ret);
         return ret;
     }
 
     if (attach) {
-        if (ports[0] != 0) {
-            fprintf(stderr, "Replacing allowed ports\n");
-
-            ret = xdpcookie_write_ports(ports_fd, ports);
-            if (ret < 0) {
-                fprintf(stderr, "xdpcookie_set_ports() has failed: %d\n", ret);
-                xdpcookie_close_maps(values_fd, ports_fd);
-                return EXIT_FAILURE;
-            }
-        }
-
         if (tcpipopts) {
             fprintf(stderr, "Replacing TCP/IP options\n");
 
             ret = xdpcookie_write_tcpipopts(values_fd, tcpipopts);
             if (ret < 0) {
                 fprintf(stderr, "xdpcookie_set_tcpipopts() has failed: %d\n", ret);
-                xdpcookie_close_maps(values_fd, ports_fd);
+                xdpcookie_close_maps(values_fd);
                 return EXIT_FAILURE;
             }
         }
@@ -488,7 +483,7 @@ int main(int argc, char *argv[])
         ret = xdpcookie_read_counters(values_fd);
         if (ret < 0) {
             fprintf(stderr, "xdpcookie_read_conters() has failed: %d\n", ret);
-            xdpcookie_close_maps(values_fd, ports_fd);
+            xdpcookie_close_maps(values_fd);
             return EXIT_FAILURE;
         }
     }
