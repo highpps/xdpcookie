@@ -1000,8 +1000,11 @@ int xdpcookie_core(struct xdp_md *ctx)
 
 	if (hdr.tcp->syn)
 		return xdpcookie_handle_syn(ctx, &hdr);
-	else
+
+	if (conf.check_acks)
 		return xdpcookie_handle_ack(ctx, &hdr);
+
+	return XDP_PASS;
 }
 
 extern int bpf_xdp_metadata_rx_vlan_tag(
