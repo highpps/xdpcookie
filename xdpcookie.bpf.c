@@ -1097,7 +1097,7 @@ static __always_inline bool check_vlan_allowed(__u16 vlan)
 	return false;
 }
 
-SEC("xdp")
+SEC("xdp.frags")
 int xdpcookie(struct xdp_md *ctx)
 {
 	__be16 vlan_proto;

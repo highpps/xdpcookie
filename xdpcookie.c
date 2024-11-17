@@ -327,6 +327,7 @@ static int xdpcookie_attach(
     __u32 *prog_id)
 {
     int flags = XDP_FLAGS_DRV_MODE; // Always attach the program in driver mode
+    int prog_flags = BPF_F_XDP_DEV_BOUND_ONLY | BPF_F_XDP_HAS_FRAGS;
     struct bpf_prog_info info = {};
     __u32 info_len = sizeof(info);
 
@@ -346,7 +347,7 @@ static int xdpcookie_attach(
 
     bpf_program__set_ifindex(prog, ifindex);
 
-    ret = bpf_program__set_flags(prog, BPF_F_XDP_DEV_BOUND_ONLY);
+    ret = bpf_program__set_flags(prog, prog_flags);
     if (ret < 0) {
         fprintf(stderr, "bpf_program__set_flags() has failed: %d\n", ret);
         xdpcookie_bpf__destroy(obj);
