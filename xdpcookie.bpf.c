@@ -122,7 +122,7 @@ static __always_inline __u16 csum_fold(__u32 csum)
 	return (__u16) ~csum;
 }
 
-static __always_inline __u16 csum_tcpudp_magic(
+static __always_inline __u16 csum_ipv4_magic(
 	__be32 saddr,
 	__be32 daddr,
 	__u32 len,
@@ -752,7 +752,7 @@ static __always_inline int syncookie_handle_syn(
 	if (value < 0)
 		return XDP_ABORTED;
 	if (hdr->ipv4) {
-		hdr->tcp->check = csum_tcpudp_magic(hdr->ipv4->saddr,
+		hdr->tcp->check = csum_ipv4_magic(hdr->ipv4->saddr,
 						    hdr->ipv4->daddr,
 						    hdr->tcp_len,
 						    IPPROTO_TCP,
@@ -827,7 +827,7 @@ static __always_inline int xdpcookie_check_sums(
 		if (hdr->ipv4 + 1 > end)
 			return XDP_ABORTED;
 
-		sum = csum_tcpudp_magic(hdr->ipv4->saddr, hdr->ipv4->daddr, hdr->tcp_len, IPPROTO_TCP, value);
+		sum = csum_ipv4_magic(hdr->ipv4->saddr, hdr->ipv4->daddr, hdr->tcp_len, IPPROTO_TCP, value);
 	} else if (hdr->ipv6) {
 		if (hdr->ipv6 + 1 > end)
 			return XDP_ABORTED;
