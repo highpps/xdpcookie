@@ -672,7 +672,7 @@ static __always_inline void tcpv6_gen_synack(
 	hdr->ipv6->payload_len = bpf_htons(hdr->tcp_len);
 }
 
-static __always_inline int syncookie_handle_syn(
+static __always_inline int xdpcookie_gen_synack(
 	struct xdp_md *ctx,
 	struct header_pointers *hdr)
 {
@@ -909,7 +909,11 @@ static __always_inline int xdpcookie_handle_syn(
 	if (ret != XDP_TX)
 		return ret;
 
-	return syncookie_handle_syn(ctx, hdr);
+	ret = xdpcookie_gen_synack(ctx, hdr);
+	if (ret != XDP_TX)
+		return ret;
+
+	return XDP_TX;
 }
 
 static __always_inline int xdpcookie_handle_ack(
