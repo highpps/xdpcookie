@@ -785,6 +785,7 @@ static __always_inline int xdpcookie_gen_synack(
 			hdr->tcp = new_tcp_header;
 
 			hdr->ipv4->ihl = sizeof(*hdr->ipv4) / 4;
+			hdr->ipvx_len = sizeof(*hdr->ipv4);
 		}
 
 		tcpv4_gen_synack(hdr, cookie, tsopt);
@@ -901,26 +902,10 @@ static __always_inline int xdpcookie_shrink_buffer(
 	struct xdp_md *ctx,
 	struct header_pointers *hdr)
 {
-	__u32 old_pkt_size, new_pkt_size;
+	__u32 old_ipbuf_len = hdr->tcp_off - hdr->ipvx_off + TCP_MAXLEN;
+	__u32 new_ipbuf_len = hdr->ipvx_len + hdr->tcp_len;
 
-	void *data_end = (void *)(long) ctx->data_end;
-	void *data = (void *)(long) ctx->data;
-
-	__u16 ip_len;
-
-	if (hdr->ipv4) {
-		ip_len = sizeof(*hdr->ipv4);
-	} else if (hdr->ipv6) {
-		ip_len = sizeof(*hdr->ipv6);
-	} else {
-		return XDP_ABORTED;
-	}
-
-	/* Set the new packet size. */
-	old_pkt_size = data_end - data;
-	new_pkt_size = sizeof(*hdr->eth) + ip_len + hdr->tcp->doff * 4;
-
-	if (bpf_xdp_adjust_tail(ctx, new_pkt_size - old_pkt_size))
+	if (bpf_xdp_adjust_tail(ctx, new_ipbuf_len - old_ipbuf_len))
 		return XDP_ABORTED;
 
 	return XDP_TX;
