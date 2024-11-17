@@ -63,9 +63,18 @@
 #define MAX_PACKET_OFF 0xffff
 
 const volatile struct {
-    __u16 vlans[MAX_VLANS_ALLOWED];
-    __u16 ports[MAX_PORTS_ALLOWED];
-} conf = {};
+	__u16 vlans[MAX_VLANS_ALLOWED];
+	__u16 ports[MAX_PORTS_ALLOWED];
+	__u16 mss4;
+	__u16 mss6;
+	__u8 wscale;
+	__u8 ttl;
+} conf = {
+	.mss4 = DEFAULT_MSS4,
+	.mss6 = DEFAULT_MSS6,
+	.wscale = DEFAULT_WSCALE,
+	.ttl = DEFAULT_TTL,
+};
 
 #define swap(a, b) \
 	do { typeof(a) __tmp = (a); (a) = (b); (b) = __tmp; } while (0)
@@ -319,23 +328,9 @@ static __always_inline void values_get_tcpipopts(
 	__u8 *ttl,
 	bool ipv6)
 {
-	__u32 key = 0;
-	__u64 *value;
-
-	value = bpf_map_lookup_elem(&values, &key);
-	if (value && *value != 0) {
-		if (ipv6)
-			*mss = (*value >> 32) & 0xffff;
-		else
-			*mss = *value & 0xffff;
-		*wscale = (*value >> 16) & 0xf;
-		*ttl = (*value >> 24) & 0xff;
-		return;
-	}
-
-	*mss = ipv6 ? DEFAULT_MSS6 : DEFAULT_MSS4;
-	*wscale = DEFAULT_WSCALE;
-	*ttl = DEFAULT_TTL;
+	*mss = ipv6 ? conf.mss6 : conf.mss4;
+	*wscale = conf.wscale;
+	*ttl = conf.ttl;
 }
 
 static __always_inline void values_inc_synacks()

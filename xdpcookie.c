@@ -90,18 +90,18 @@ static void parse_arguments(
     int argc,
     char *argv[],
     unsigned int *ifindex,
-    __u64 *tcpipopts,
     __u16 ports[],
     __u16 vlans[],
+    __u16 *mss4,
+    __u16 *mss6,
+    __u8 *wscale,
+    __u8 *ttl,
     int *attach,
     int *detach,
     int *show)
 {
     const char *progname = argv[0];
 
-    unsigned long long mss6;
-    unsigned long mss4, wscale, ttl;
-    unsigned int tcpipopts_mask = 0;
     unsigned int port_idx = 0;
     unsigned int vlan_idx = 0;
 
@@ -109,10 +109,14 @@ static void parse_arguments(
         usage(progname);
 
     *ifindex = 0;
-    *tcpipopts = 0;
 
     ports[port_idx] = 0;
     vlans[vlan_idx] = 0;
+
+    *mss4 = 0;
+    *mss6 = 0;
+    *wscale = 0;
+    *ttl = 0;
 
     *attach = false;
     *detach = false;
@@ -133,20 +137,16 @@ static void parse_arguments(
             *ifindex = parse_ifname(progname, optarg);
             break;
         case '4':
-            mss4 = parse_unsigned(progname, optarg, UINT16_MAX);
-            tcpipopts_mask |= 1 << 0;
+            *mss4 = parse_unsigned(progname, optarg, UINT16_MAX);
             break;
         case '6':
-            mss6 = parse_unsigned(progname, optarg, UINT16_MAX);
-            tcpipopts_mask |= 1 << 1;
+            *mss6 = parse_unsigned(progname, optarg, UINT16_MAX);
             break;
         case 'w':
-            wscale = parse_unsigned(progname, optarg, 14);
-            tcpipopts_mask |= 1 << 2;
+            *wscale = parse_unsigned(progname, optarg, 14);
             break;
         case 't':
-            ttl = parse_unsigned(progname, optarg, UINT8_MAX);
-            tcpipopts_mask |= 1 << 3;
+            *ttl = parse_unsigned(progname, optarg, UINT8_MAX);
             break;
         case 'p':
             ports[port_idx++] = parse_unsigned(progname, optarg, UINT16_MAX);
@@ -169,16 +169,6 @@ static void parse_arguments(
 
     if (optind < argc)
         usage(progname);
-
-    if (tcpipopts_mask == 0xf) {
-        if (mss4 == 0 || mss6 == 0 || wscale == 0 || ttl == 0)
-            usage(progname);
-
-        *tcpipopts = (mss6 << 32) | (ttl << 24) | (wscale << 16) | mss4;
-    }
-    else if (tcpipopts_mask != 0) {
-        usage(progname);
-    }
 
     if (*ifindex == 0)
         usage(progname);
@@ -319,7 +309,43 @@ static void xdpcookie_write_ports(struct xdpcookie_bpf *obj, __u16 ports[])
     }
 }
 
-static int xdpcookie_attach(unsigned int ifindex, __u16 ports[], __u16 vlans[], __u32 *prog_id)
+static void xdpcookie_write_tcpipopts(
+    struct xdpcookie_bpf *obj,
+    __u16 mss4,
+    __u16 mss6,
+    __u8 wscale,
+    __u8 ttl)
+{
+    if (mss4 != 0) {
+        obj->rodata->conf.mss4 = mss4;
+        fprintf(stderr, "IPv4 MSS %u\n", mss4);
+    }
+
+    if (mss6 != 0) {
+        obj->rodata->conf.mss6 = mss6;
+        fprintf(stderr, "IPv6 MSS %u\n", mss6);
+    }
+
+    if (wscale != 0) {
+        obj->rodata->conf.wscale = wscale;
+        fprintf(stderr, "Window scale %u\n", wscale);
+    }
+
+    if (ttl != 0) {
+        obj->rodata->conf.ttl = ttl;
+        fprintf(stderr, "TTL %u\n", ttl);
+    }
+}
+
+static int xdpcookie_attach(
+    unsigned int ifindex,
+    __u16 ports[],
+    __u16 vlans[],
+    __u16 mss4,
+    __u16 mss6,
+    __u8 wscale,
+    __u8 ttl,
+    __u32 *prog_id)
 {
     int flags = XDP_FLAGS_DRV_MODE; // Always attach the program in driver mode
     struct bpf_prog_info info = {};
@@ -350,6 +376,7 @@ static int xdpcookie_attach(unsigned int ifindex, __u16 ports[], __u16 vlans[], 
 
     xdpcookie_write_vlans(obj, vlans);
     xdpcookie_write_ports(obj, ports);
+    xdpcookie_write_tcpipopts(obj, mss4, mss6, wscale, ttl);
 
     ret = xdpcookie_bpf__load(obj);
     if (ret < 0) {
@@ -395,24 +422,16 @@ static int xdpcookie_read_counters(int values_fd)
     return ret;
 }
 
-static int xdpcookie_write_tcpipopts(int values_fd, __u64 tcpipopts)
-{
-    __u32 key = 0;
-
-    int ret = bpf_map_update_elem(values_fd, &key, &tcpipopts, BPF_ANY);
-    if (ret < 0)
-        fprintf(stderr, "bpf_map_update_elem() has failed: %d\n", ret);
-
-    return ret;
-}
-
 int main(int argc, char *argv[])
 {
     int values_fd;
     unsigned int ifindex;
     __u16 ports[argc];
     __u16 vlans[argc];
-    __u64 tcpipopts;
+    __u16 mss4;
+    __u16 mss6;
+    __u8 wscale;
+    __u8 ttl;
     int attach;
     int detach;
     int show;
@@ -425,7 +444,7 @@ int main(int argc, char *argv[])
         .rlim_max = RLIM_INFINITY,
     };
 
-    parse_arguments(argc, argv, &ifindex, &tcpipopts, ports, vlans, &attach, &detach, &show);
+    parse_arguments(argc, argv, &ifindex, ports, vlans, &mss4, &mss6, &wscale, &ttl, &attach, &detach, &show);
 
     ret = setrlimit(RLIMIT_MEMLOCK, &rlim);
     if (ret < 0) {
@@ -453,33 +472,20 @@ int main(int argc, char *argv[])
     }
 
     if (attach) {
-        ret = xdpcookie_attach(ifindex, ports, vlans, &prog_id);
+        ret = xdpcookie_attach(ifindex, ports, vlans, mss4, mss6, wscale, ttl, &prog_id);
         if (ret < 0) {
             fprintf(stderr, "xdpcookie_attach(%d) has failed: %d\n", ifindex, ret);
             return EXIT_FAILURE;
         }
     }
 
-    ret = xdpcookie_open_maps(prog_id, &values_fd);
-    if (ret < 0) {
-        fprintf(stderr, "xdpcookie_open_maps() has failed: %d\n", ret);
-        return ret;
-    }
-
-    if (attach) {
-        if (tcpipopts) {
-            fprintf(stderr, "Replacing TCP/IP options\n");
-
-            ret = xdpcookie_write_tcpipopts(values_fd, tcpipopts);
-            if (ret < 0) {
-                fprintf(stderr, "xdpcookie_set_tcpipopts() has failed: %d\n", ret);
-                xdpcookie_close_maps(values_fd);
-                return EXIT_FAILURE;
-            }
-        }
-    }
-
     if (show) {
+        ret = xdpcookie_open_maps(prog_id, &values_fd);
+        if (ret < 0) {
+            fprintf(stderr, "xdpcookie_open_maps() has failed: %d\n", ret);
+            return ret;
+        }
+
         ret = xdpcookie_read_counters(values_fd);
         if (ret < 0) {
             fprintf(stderr, "xdpcookie_read_conters() has failed: %d\n", ret);
