@@ -905,9 +905,15 @@ static __always_inline int xdpcookie_handle_syn(
 }
 
 static __always_inline int xdpcookie_handle_ack(
+	struct xdp_md *ctx,
 	struct header_pointers *hdr)
 {
 	int ret;
+
+	// Established connection?
+	ret = tcp_lookup(ctx, hdr);
+	if (ret != XDP_TX)
+		return ret;
 
 	if (hdr->tcp->rst)
 		return XDP_DROP;
@@ -939,11 +945,6 @@ int xdpcookie_core(struct xdp_md *ctx)
 	if (!check_port_allowed(bpf_ntohs(hdr.tcp->dest)))
 		return XDP_PASS;
 
-	// Established connection?
-	ret = tcp_lookup(ctx, &hdr);
-	if (ret != XDP_TX)
-		return ret;
-
 	// SYN / ACK mutually non exclusive
 	if ((hdr.tcp->syn ^ hdr.tcp->ack) != 1)
 		return XDP_DROP;
@@ -951,7 +952,7 @@ int xdpcookie_core(struct xdp_md *ctx)
 	if (hdr.tcp->syn)
 		return xdpcookie_handle_syn(ctx, &hdr);
 	else
-		return xdpcookie_handle_ack(&hdr);
+		return xdpcookie_handle_ack(ctx, &hdr);
 }
 
 extern int bpf_xdp_metadata_rx_vlan_tag(
