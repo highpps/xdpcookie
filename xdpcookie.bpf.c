@@ -77,7 +77,7 @@ const volatile struct xdpcookie_conf conf = {
 #define get_unaligned(ptr) __get_unaligned_t(typeof(*(ptr)), (ptr))
 
 struct {
-	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__type(key, __u32);
 	__type(value, __u64);
 	__uint(max_entries, 1);

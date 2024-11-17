@@ -388,16 +388,26 @@ static int xdpcookie_attach(
 
 static int xdpcookie_read_counters(int values_fd)
 {
-    __u32 key = 0;
-    __u64 value;
+    const unsigned int cpus = libbpf_num_possible_cpus();
 
-    int ret = bpf_map_lookup_elem(values_fd, &key, &value);
+    __u32 key = 0;
+    __u64 sum = 0;
+    __u64 values[cpus];
+
+    int ret = bpf_map_lookup_elem(values_fd, &key, values);
     if (ret < 0) {
         fprintf(stderr, "bpf_map_update_elem() has failed: %d\n", ret);
         return ret;
     }
 
-    fprintf(stdout, "SYN-ACK responses generated: %llu\n", value);
+    for (int i = 0; i < cpus; i++)
+        sum += values[i];
+
+    fprintf(stdout, "SYN-ACK responses generated: %llu\n", sum);
+
+    for (int i = 0; i < cpus; i++)
+        fprintf(stdout, "\tCPU%02d responses: %llu\n", i, values[i]);
+
     return ret;
 }
 
