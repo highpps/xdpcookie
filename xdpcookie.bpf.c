@@ -330,7 +330,7 @@ static __always_inline void values_inc_synacks()
 
 	value = bpf_map_lookup_elem(&values, &key);
 	if (value)
-		__sync_fetch_and_add(value, 1);
+		*value = *value + 1;
 }
 
 struct hdr_cursor {
