@@ -673,11 +673,12 @@ static __always_inline void tcpv6_gen_synack(
 }
 
 static __always_inline int syncookie_handle_syn(
-	struct header_pointers *hdr,
-	void *ctx,
-	void *data,
-	void *data_end)
+	struct xdp_md *ctx,
+	struct header_pointers *hdr)
 {
+	void *data_end = (void *)(long) ctx->data_end;
+	void *data = (void *)(long) ctx->data;
+
 	__u32 old_pkt_size, new_pkt_size;
 	/* Unlike clang 10, clang 11 and 12 generate code that doesn't pass the
 	 * BPF verifier if tsopt is not volatile. Volatile forces it to store
@@ -858,9 +859,6 @@ static __always_inline int xdpcookie_handle_syn(
 	struct xdp_md *ctx,
 	struct header_pointers *hdr)
 {
-	void *data_end;
-	void *data;
-
 	int ret;
 
 	if (hdr->tcp->fin || hdr->tcp->rst)
@@ -870,10 +868,7 @@ static __always_inline int xdpcookie_handle_syn(
 	if (ret != XDP_TX)
 		return ret;
 
-	data_end = (void *)(long) ctx->data_end;
-	data = (void *)(long) ctx->data;
-
-	return syncookie_handle_syn(hdr, ctx, data, data_end);
+	return syncookie_handle_syn(ctx, hdr);
 }
 
 static __always_inline int xdpcookie_handle_ack(
