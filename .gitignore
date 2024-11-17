@@ -1,4 +1,5 @@
 xdpcookie
 vmlinux.h
 *.bpf.h
+*.gz
 *.o

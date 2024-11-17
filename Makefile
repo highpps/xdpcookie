@@ -14,8 +14,15 @@ CONFIG := config.mk
 CONFIGURE := configure
 include $(CONFIG)
 
+MANSEC := 8
+README := README.md
+MANPAGE := $(USER_PROG).$(MANSEC)
+MANGZ := $(USER_PROG).$(MANSEC).gz
+
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
+DATADIR ?= $(PREFIX)/share
+MANDIR ?= $(DATADIR)/man/man$(MANSEC)
 
 MKDEPS := Makefile $(CONFIG) ${CONFIGURE}
 
@@ -48,10 +55,17 @@ $(EBPF_SKEL): %.h: %.o $(MKDEPS)
 $(USER_PROG): %: %.c $(EBPF_SKEL) $(MKDEPS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LDLIBS)
 
-.PHONY: install clean
+$(MANGZ): $(MKDEPS) $(README)
+	sed -e "1i%$(USER_PROG)($(MANSEC)) $(VERSION) | $(USER_PROG) documentation" $(README) | $(PANDOC) -s -f markdown -t man -o $(MANPAGE)
+	gzip -f $(MANPAGE)
+
+.PHONY: man install clean
+
+man: $(MANGZ)
 
 install:
 	install -D -t $(DESTDIR)$(BINDIR) $(USER_PROG)
+	install -D -t $(DESTDIR)$(MANDIR) $(MANGZ)
 
 clean:
-	rm -f ${VMLINUX} $(USER_PROG) $(EBPF_OBJS) $(EBPF_SKEL)
+	rm -f ${VMLINUX} $(USER_PROG) $(EBPF_OBJS) $(EBPF_SKEL) $(MANGZ)

@@ -17,6 +17,7 @@ check_toolchain()
 {
     local clang_version
 
+    : ${PANDOC:=pandoc}
     : ${PKG_CONFIG:=pkg-config}
     : ${CC=gcc}
     : ${CLANG=clang}
@@ -51,6 +52,7 @@ check_toolchain()
         done
     fi
 
+    echo "PANDOC:=${PANDOC}" >>$CONFIG
     echo "PKG_CONFIG:=${PKG_CONFIG}" >>$CONFIG
     echo "CC:=${CC}" >>$CONFIG
     echo "CLANG:=${CLANG}" >>$CONFIG
