@@ -810,7 +810,7 @@ static __always_inline int syncookie_handle_syn(
 	return XDP_TX;
 }
 
-static __always_inline int syncookie_part2(
+static __always_inline int xdpcookie_grow_buffer(
 	struct xdp_md *ctx,
 	struct header_pointers *hdr)
 {
@@ -853,17 +853,29 @@ static __always_inline int syncookie_part2(
 	if (hdr->tcp_len < sizeof(*hdr->tcp))
 		return XDP_ABORTED;
 
-	return syncookie_handle_syn(hdr, ctx, data, data_end);
+	return XDP_TX;
 }
 
 static __always_inline int xdpcookie_handle_syn(
 	struct xdp_md *ctx,
 	struct header_pointers *hdr)
 {
+	void *data_end;
+	void *data;
+
+	int ret;
+
 	if (hdr->tcp->fin || hdr->tcp->rst)
 		return XDP_DROP;
 
-	return syncookie_part2(ctx, hdr);
+	ret = xdpcookie_grow_buffer(ctx, hdr);
+	if (ret != XDP_TX)
+		return ret;
+
+	data_end = (void *)(long) ctx->data_end;
+	data = (void *)(long) ctx->data;
+
+	return syncookie_handle_syn(hdr, ctx, data, data_end);
 }
 
 static __always_inline int xdpcookie_handle_ack(
