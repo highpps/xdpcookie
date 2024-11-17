@@ -840,13 +840,94 @@ int xdpcookie_core(struct xdp_md *ctx)
 	return syncookie_part2(ctx, data, data_end, &hdr);
 }
 
-SEC("xdp")
-int xdpcookie(struct xdp_md *ctx)
+extern int bpf_xdp_metadata_rx_vlan_tag(
+	const struct xdp_md *ctx,
+	__be16 *vlan_proto,
+	__u16 *vlan_tci) __ksym;
+
+static __always_inline void vlan_tag_read(
+	struct xdp_md *ctx,
+	__be16 *vlan_proto,
+	__u16 *vlan_tci)
 {
 	int ret;
 
+	ret = bpf_xdp_metadata_rx_vlan_tag(ctx, vlan_proto, vlan_tci);
+	if (ret < 0) {
+		*vlan_proto = 0;
+		*vlan_tci = 0;
+	}
+}
+
+static __always_inline int vlan_tag_push(
+	struct xdp_md *ctx,
+	__be16 vlan_proto,
+	__u16 vlan_tci)
+{
+	struct ethhdr eth_copy;
+	struct vlan_hdr *vlan;
+	struct ethhdr *eth;
+	void *end;
+
+	// Nothing to push
+	if (vlan_proto == 0)
+		return XDP_TX;
+
+	eth = (void *)(long) ctx->data;
+	end = (void *)(long) ctx->data_end;
+	if (eth + 1 > end)
+		return XDP_ABORTED;
+
+	// Copy the original Ethernet header
+	__builtin_memcpy(&eth_copy, eth, sizeof(eth_copy));
+
+	// Create space in front of the packet
+	if (bpf_xdp_adjust_head(ctx, 0 - (int) sizeof(*vlan)))
+		return XDP_ABORTED;
+
+	// Re-evaluate end and eth after head adjustment as the
+	// underlying packet buffer may changed and the checks
+	// on pointers by the verifier were invalidated.
+
+	eth = (void *)(long) ctx->data;
+	end = (void *)(long) ctx->data_end;
+	if (eth + 1 > end)
+		return XDP_ABORTED;
+
+	// Copy back the Ethernet header in the right place
+	__builtin_memcpy(eth, &eth_copy, sizeof(eth_copy));
+
+	vlan = (void *)(eth + 1);
+	if (vlan + 1 > end)
+		return XDP_ABORTED;
+
+	// Populate VLAN tag with ID and proto
+	vlan->h_vlan_TCI = bpf_htons(vlan_tci);
+	vlan->h_vlan_encapsulated_proto = eth->h_proto;
+
+	// Set Ethernet header type to VLAN
+	eth->h_proto = vlan_proto;
+
+	return XDP_TX;
+}
+
+SEC("xdp")
+int xdpcookie(struct xdp_md *ctx)
+{
+	__be16 vlan_proto;
+	__u16 vlan_tci;
+	int ret;
+
+	// Read VLAN tag from metadata
+	vlan_tag_read(ctx, &vlan_proto, &vlan_tci);
+
 	// Evaluate the packet
 	ret = xdpcookie_core(ctx);
+	if (ret != XDP_TX)
+		return ret;
+
+	// Push the VLAN tag back, for TX responses
+	ret = vlan_tag_push(ctx, vlan_proto, vlan_tci);
 	if (ret != XDP_TX)
 		return ret;
 
