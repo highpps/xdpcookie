@@ -715,7 +715,6 @@ static __always_inline int xdpcookie_gen_synack(
 	void *data_end = (void *)(long) ctx->data_end;
 	void *data = (void *)(long) ctx->data;
 
-	__u32 old_pkt_size, new_pkt_size;
 	/* Unlike clang 10, clang 11 and 12 generate code that doesn't pass the
 	 * BPF verifier if tsopt is not volatile. Volatile forces it to store
 	 * the pointer value and use it directly, otherwise tcp_mkoptions is
@@ -798,13 +797,6 @@ static __always_inline int xdpcookie_gen_synack(
 	ret = xdpcookie_calc_sums(ctx, hdr);
 	if (ret != XDP_TX)
 		return ret;
-
-	/* Set the new packet size. */
-	old_pkt_size = data_end - data;
-	new_pkt_size = sizeof(*hdr->eth) + ip_len + hdr->tcp->doff * 4;
-
-	if (bpf_xdp_adjust_tail(ctx, new_pkt_size - old_pkt_size))
-		return XDP_ABORTED;
 
 	return XDP_TX;
 }
@@ -905,6 +897,35 @@ static __always_inline int xdpcookie_grow_buffer(
 	return XDP_TX;
 }
 
+static __always_inline int xdpcookie_shrink_buffer(
+	struct xdp_md *ctx,
+	struct header_pointers *hdr)
+{
+	__u32 old_pkt_size, new_pkt_size;
+
+	void *data_end = (void *)(long) ctx->data_end;
+	void *data = (void *)(long) ctx->data;
+
+	__u16 ip_len;
+
+	if (hdr->ipv4) {
+		ip_len = sizeof(*hdr->ipv4);
+	} else if (hdr->ipv6) {
+		ip_len = sizeof(*hdr->ipv6);
+	} else {
+		return XDP_ABORTED;
+	}
+
+	/* Set the new packet size. */
+	old_pkt_size = data_end - data;
+	new_pkt_size = sizeof(*hdr->eth) + ip_len + hdr->tcp->doff * 4;
+
+	if (bpf_xdp_adjust_tail(ctx, new_pkt_size - old_pkt_size))
+		return XDP_ABORTED;
+
+	return XDP_TX;
+}
+
 static __always_inline int xdpcookie_handle_syn(
 	struct xdp_md *ctx,
 	struct header_pointers *hdr)
@@ -923,6 +944,10 @@ static __always_inline int xdpcookie_handle_syn(
 		return ret;
 
 	ret = xdpcookie_gen_synack(ctx, hdr);
+	if (ret != XDP_TX)
+		return ret;
+
+	ret = xdpcookie_shrink_buffer(ctx, hdr);
 	if (ret != XDP_TX)
 		return ret;
 
